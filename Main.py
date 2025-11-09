@@ -6,18 +6,9 @@ import random
 import asyncio
 from datetime import datetime
 import aiohttp
-from dotenv import load_dotenv
 
-# Cargar variables de entorno
-load_dotenv()
-
-# Configuración
-DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-CHANNEL_IDS = [int(x.strip()) for x in os.getenv('CHANNEL_IDS', '').split(',') if x.strip()]
-
-# Configurar OpenAI
-openai.api_key = OPENAI_API_KEY
+# No cargar .env en producción (Render lo maneja con variables de entorno)
+# Las variables se leen directamente de os.getenv()
 
 class AIBot(discord.Client):
     def __init__(self):
@@ -30,61 +21,59 @@ class AIBot(discord.Client):
         super().__init__(intents=intents)
         
         # Cargar prompt desde archivo
-        with open('prompt.txt', 'r', encoding='utf-8') as file:
-            self.base_prompt = file.read()
+        try:
+            with open('prompt.txt', 'r', encoding='utf-8') as file:
+                self.base_prompt = file.read()
+            print("✅ Prompt cargado correctamente")
+        except Exception as e:
+            print(f"❌ Error cargando prompt: {e}")
+            self.base_prompt = "Eres un asistente útil."
+        
+        # Obtener variables de entorno de Render
+        self.discord_token = os.getenv('DISCORD_TOKEN')
+        self.openai_api_key = os.getenv('OPENAI_API_KEY')
+        
+        # Configurar canales (opcional)
+        channel_ids = os.getenv('CHANNEL_IDS', '')
+        self.channel_ids = [int(x.strip()) for x in channel_ids.split(',') if x.strip()] if channel_ids else []
+        
+        # Configurar OpenAI
+        if self.openai_api_key:
+            openai.api_key = self.openai_api_key
+        else:
+            print("⚠️  OPENAI_API_KEY no configurada")
         
         self.conversation_histories = {}
         self.last_random_message = {}
 
     async def setup_hook(self):
-        # Iniciar tareas en segundo plano
+        # Verificar que tenemos el token de Discord
+        if not self.discord_token:
+            print("❌ DISCORD_TOKEN no configurado")
+            return
+            
         self.random_message_task.start()
         print("🤖 Bot iniciado y tareas programadas")
 
     async def on_ready(self):
         print(f'✅ {self.user} se ha conectado a Discord!')
         print(f'📊 Conectado a {len(self.guilds)} servidores')
-        
-        # Inicializar historiales de conversación
-        for guild in self.guilds:
-            for channel in guild.text_channels:
-                if channel.id in CHANNEL_IDS or not CHANNEL_IDS:
-                    self.conversation_histories[channel.id] = []
+        print(f'🎯 Canales designados: {self.channel_ids if self.channel_ids else "Todos los canales"}')
 
-    async def get_ai_response(self, message_content, channel_id, is_random=False):
-        """Obtener respuesta de la IA"""
-        try:
-            # Construir historial de conversación
-            history = self.conversation_histories.get(channel_id, [])[-10:]  # Últimos 10 mensajes
-            
-            messages = [
-                {"role": "system", "content": self.base_prompt}
-            ]
-            
-            # Agregar historial de conversación
-            for msg in history:
-                messages.append(msg)
-            
-            # Agregar mensaje actual o instrucción para mensaje aleatorio
-            if is_random:
-                messages.append({
-                    "role": "user", 
-                    "content": f"Genera un mensaje casual y relevante basado en la conversación reciente. Sé natural y apropiado para el contexto. Conversación reciente: {self.get_recent_conversation_preview(channel_id)}"
-                })
-            else:
-                messages.append({"role": "user", "content": message_content})
-            
-            # Llamar a OpenAI
-            async with aiohttp.ClientSession() as session:
-                client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY, http_client=session)
-                response = await client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=messages,
-                    max_tokens=150,
-                    temperature=0.7 if is_random else 0.5
-                )
-            
-            return response.choices[0].message.content.strip()
+    # ... (el resto del código permanece igual)
+
+# Verificar variables críticas antes de iniciar
+if __name__ == "__main__":
+    required_vars = ['DISCORD TOKEN', 'OPENAI_API_KEY']
+    missing_vars = [var for var in required_vars if not os.getenv(var)]
+    
+    if missing_vars:
+        print(f"❌ Variables faltantes: {', '.join(missing_vars)}")
+        print("💡 Configúralas en Render.com → Environment Variables")
+        exit(1)
+    
+    bot = AIBot()
+    bot.run(os.getenv('DISCORD_TOKEN'))            return response.choices[0].message.content.strip()
             
         except Exception as e:
             print(f"❌ Error con OpenAI: {e}")
